@@ -121,7 +121,7 @@ def random_hflip(image, label, u=0.5):
 
 
 class CornealLimbusDataset(data.Dataset):
-    def __init__(self, mode='train', image_size=(200, 576), train_idx=[1, 2], test_idx=[3]):
+    def __init__(self, mode='train', image_size=(200, 576), train_idx=[1, 2, 3], test_idx=[3]):
         """Assume dataset is in directory '.data/frames_X/*' and '.data/label_init_X.jpg'
 
         Argument:
@@ -167,7 +167,7 @@ class CornealLimbusDataset(data.Dataset):
         prev_lb = simulate_prev_label(lb)
 
         # Normalize
-        im = img_as_float(im)
+        # im = img_as_float(im)
         im, lb, prev_lb = [item[np.newaxis, ...].astype(np.float32) for item in [im, lb, prev_lb]]
 
         # Convert to Tensor

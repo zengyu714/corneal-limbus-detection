@@ -25,6 +25,7 @@ class UNetVanilla(nn.Module):
         self.classify = nn.Conv2d(16, 2, kernel_size=1)
 
     def forward(self, x, y_prev):
+
         lhs_1x = self.lhs_1x(torch.cat([x, y_prev], dim=1))
         lhs_2x = self.lhs_2x(lhs_1x)
         lhs_4x = self.lhs_4x(lhs_2x)

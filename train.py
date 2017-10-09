@@ -81,7 +81,11 @@ def main():
         model = UNetMulLoss()
     elif args.architecture == 2:
         conf.prefix = 'UNetWeightedDice'
-        conf.loss_func = 'DiceLoss_Linear(weights)(probs, trues)'
+        conf.loss_func = 'DiceLoss(weights)(probs, trues)'
+        model = UNetVanilla()
+    elif args.architecture == 3:
+        conf.prefix = 'test'
+        conf.loss_func = 'DiceLoss(weights)(probs, trues)'
         model = UNetVanilla()
 
     conf.generate_dirs()
@@ -122,7 +126,7 @@ def main():
     class_weight = avg_class_weight(test_data_loader).cuda()
     conf.class_weight = class_weight
     print('---> Rescaled class weights: {}'.format(class_weight.cpu().numpy().T))
-    print('---> Loss function: Default Square Dice Loss')
+    print('---> Loss function: {}'.format(conf.loss_func))
 
     # Visdom
     # ----------------------------------------------------------------------------------------------------
