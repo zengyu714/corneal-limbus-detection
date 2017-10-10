@@ -10,6 +10,7 @@ from torch.autograd import Variable
 
 from tqdm import tqdm
 from scipy.misc import imread, imsave
+from skimage.feature import corner_harris, corner_peaks
 from skimage.morphology import remove_small_objects, remove_small_holes, binary_closing, disk, label
 from skimage.segmentation import find_boundaries
 
@@ -34,11 +35,51 @@ def blend(image, label, curve_mask=None, alpha=0.3):
     return rgb.astype(np.uint8)
 
 
-def remove_isolation(mask):
-    """Remove discrete pixels"""
+def loop_close(num, bw, radius=35):
+    while num > 1:
+        bw = binary_closing(bw, disk(radius))
+        _, num = label(bw, return_num=True)
+        radius += 10
+        # vis.image(bw.astype(np.uint8) * 255)
+    return bw
+
+
+def loop_corner(coords, bw, w, rw, radius=35):
+    """
+    Argument:
+        coords: coordinates of detected corners
+        bw: black-and-white label
+        w:  width of label
+        rw: region of interest
+        radius: element radius to closing the gap between corners
+    """
+    while len(coords):
+        coords = corner_peaks(corner_harris(bw[:, w // 2 - rw: w // 2 + rw], k=0.2), min_distance=10)
+        bw = binary_closing(bw, disk(radius))
+        radius += 10
+    return bw
+
+
+def remove_isolation(mask, roi_width=30):
+    """Remove discrete pixels and close gaps
+    Argument:
+        roi width: corner detection range
+    """
+    # 1) Filling holes
     bw = label(mask == 1)
     bw = remove_small_objects(bw, min_size=4096, connectivity=2)
     bw = remove_small_holes(bw, min_size=4096, connectivity=2)
+    # 2) Detect evil interval
+    _, num = label(bw, return_num=True)
+    if num > 1:
+        print('Fixed discontinuity')
+        bw = loop_close(num, bw)
+    # 3) Detect breach in the edge
+    w, rw = mask.shape[1], roi_width
+    coords = corner_peaks(corner_harris(bw[:, w // 2 - rw: w // 2 + rw], k=0.2), min_distance=10)
+    if len(coords):
+        print('Detected corner and filling')
+        bw = loop_corner(coords, bw, w, rw)
     return bw.astype(np.uint8)
 
 
@@ -51,17 +92,6 @@ def fitting_curve(mask, margin=(60, 60)):
         thickness: between upper and lower limbus
         curve_mask: the same shape as mask while labeled by 1
     """
-    # 0. Detect evil interval
-    _, num = label(mask, return_num=True)
-    if num > 1:
-        print('Fix discontinuity')
-        radius = 35
-        while num > 1:
-            mask = binary_closing(mask, disk(radius))
-            _, num = label(mask, return_num=True)
-            radius += 10
-        mask = mask.astype(np.uint8) * 255
-
     # 1. Find boundary
     bound = find_boundaries(mask, mode='outer')
     # 2. Crop marginal parts (may be noise)
@@ -84,8 +114,6 @@ def fitting_curve(mask, margin=(60, 60)):
     y_up_fit, y_lw_fit = [np.array(y, dtype=int) for y in [y_up_fit, y_lw_fit]]  # int for slice
     curve_mask[y_up_fit[lhs: -rhs], x_cord[lhs: -rhs]] = 255
     curve_mask[y_lw_fit[lhs: -rhs], x_cord[lhs: -rhs]] = 255
-
-    vis.image(curve_mask.astype(np.uint8))
 
     return abs(thickness.mean()), curve_mask
 
@@ -167,5 +195,5 @@ if __name__ == '__main__':
 
     model = UNetVanilla()
     model_name = 'UNetVanilla'
-    infer(model, model_name, infer_index=[4, 5], dewatermark=True)
-    generate_gif(model_name, infer_index=[4, 5])
+    infer(model, model_name, infer_index=[1, 2, 3, 4, 5], dewatermark=True)
+    generate_gif(model_name, infer_index=[1, 2, 3, 4, 5])
