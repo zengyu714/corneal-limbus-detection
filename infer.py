@@ -10,7 +10,7 @@ from torch.autograd import Variable
 
 from tqdm import tqdm
 from scipy.misc import imread, imsave
-from skimage.morphology import remove_small_objects, remove_small_holes, label
+from skimage.morphology import remove_small_objects, remove_small_holes, binary_closing, disk, label
 from skimage.segmentation import find_boundaries
 
 from inputs import get_watermark_template, remove_watermark
@@ -42,7 +42,7 @@ def remove_isolation(mask):
     return bw.astype(np.uint8)
 
 
-def thickness_fit_curve(mask, margin=(60, 60)):
+def fitting_curve(mask, margin=(60, 60)):
     """Compute thickness by fitting the curve
     Argument:
         margin: indicate valid mask region in case overfit
@@ -51,6 +51,17 @@ def thickness_fit_curve(mask, margin=(60, 60)):
         thickness: between upper and lower limbus
         curve_mask: the same shape as mask while labeled by 1
     """
+    # 0. Detect evil interval
+    _, num = label(mask, return_num=True)
+    if num > 1:
+        print('Fix discontinuity')
+        radius = 35
+        while num > 1:
+            mask = binary_closing(mask, disk(radius))
+            _, num = label(mask, return_num=True)
+            radius += 10
+        mask = mask.astype(np.uint8) * 255
+
     # 1. Find boundary
     bound = find_boundaries(mask, mode='outer')
     # 2. Crop marginal parts (may be noise)
@@ -67,12 +78,14 @@ def thickness_fit_curve(mask, margin=(60, 60)):
     x_cord = range(width)
     y_up_fit, y_lw_fit = [f(x_cord) for f in [f_up, f_lw]]
 
-    thickness = (y_up_fit - y_lw_fit)[width // 2 - 7: width // 2 + 7]
+    thickness = (y_up_fit - y_lw_fit)[width // 2 - 10: width // 2 + 10]
 
     curve_mask = np.zeros_like(mask)
     y_up_fit, y_lw_fit = [np.array(y, dtype=int) for y in [y_up_fit, y_lw_fit]]  # int for slice
     curve_mask[y_up_fit[lhs: -rhs], x_cord[lhs: -rhs]] = 255
     curve_mask[y_lw_fit[lhs: -rhs], x_cord[lhs: -rhs]] = 255
+
+    vis.image(curve_mask.astype(np.uint8))
 
     return abs(thickness.mean()), curve_mask
 
@@ -81,7 +94,7 @@ def name2digit(name, char='_'):
     return int(name.split(char)[-1][:-4])
 
 
-def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True, fit_curve=True):
+def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True):
     model = model.cuda().eval()
 
     best_path = 'checkpoints/{}/{}_best.pth'.format(model_name, model_name)
@@ -103,7 +116,7 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True, fit_curve=
             else:
                 im = imread(p)
             x = Variable(torch.from_numpy(im[None, None, ...]), volatile=True).float().cuda()
-            vis.image(im, opts=dict(title='image: {}'.format(i)))
+
             if i == 1:
                 lb = imread('data/label_init_{}.jpg'.format(idx))
                 lb = (lb > lb.max() * 0.5).astype(float)
@@ -119,11 +132,10 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True, fit_curve=
             pred = pred[0].cpu().numpy()
             # Post-process
             display = remove_isolation(pred) * 255
-
             try:
-                thickness, curve_mask = thickness_fit_curve(display)
+                thickness, curve_mask = fitting_curve(display)
                 thicks.append(thickness)
-            except:
+            except IndexError:
                 curve_mask = None
                 thicks.append(0)
                 print('Oops, fail to detect {}th frame...'.format(i))
@@ -134,7 +146,8 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True, fit_curve=
 
             imsave(deploy_dir[0] + '/{}.jpg'.format(i), display)
             imsave(deploy_dir[1] + '/{}.jpg'.format(i), blend(im, display, curve_mask))
-            vis.image(display, opts=dict(title='image: {}'.format(i)))
+            # vis.image(im, opts=dict(title='image: {}'.format(i)))
+            # vis.image(display, opts=dict(title='image: {}'.format(i)))
 
         np.save('deploy/{}/thickness_{}.npy'.format(model_name, idx), thicks)
 
