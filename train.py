@@ -10,7 +10,8 @@ import torch.optim as optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
-from unet import UNetVanilla, UNetMulLoss
+from unet import UNetVanilla, UNetMulLoss, UNetShortCut
+from dualnet import Fusion
 from inputs import CornealLimbusDataset
 
 from bluntools.easy_visdom import EasyVisdom
@@ -84,9 +85,13 @@ def main():
         conf.loss_func = 'DiceLoss(weights)(probs, trues)'
         model = UNetVanilla()
     elif args.architecture == 3:
-        conf.prefix = 'test'
-        conf.loss_func = 'DiceLoss(weights)(probs, trues)'
-        model = UNetVanilla()
+        conf.prefix = 'UNetShortCut'
+        conf.loss_func = 'DiceLoss()(probs, trues)'
+        model = UNetShortCut()
+    elif args.architecture == 4:
+        conf.prefix = 'Fusion'
+        conf.loss_func = 'DiceLoss()(probs, trues)'
+        model = Fusion()
 
     conf.generate_dirs()
 

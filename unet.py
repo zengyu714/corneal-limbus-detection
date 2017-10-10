@@ -44,7 +44,6 @@ class UNetVanilla(nn.Module):
 
 
 class UNetMulLoss(nn.Module):
-    """Input: [batch_size, 3, 256, 256]"""
 
     def __init__(self):
         super(UNetMulLoss, self).__init__()
@@ -86,3 +85,39 @@ class UNetMulLoss(nn.Module):
                 self.classify_4x(rhs_4x),
                 self.classify_8x(rhs_8x),
                 self.classify_16x(rhs_16x))
+
+
+class UNetShortCut(nn.Module):
+    def __init__(self):
+        super(UNetShortCut, self).__init__()
+        self.in_fit = nn.Sequential(ConvBNReLU(2, 16), ConvBNReLU(16, 16))
+
+        self.lhs_1x = DownBlock(16, 32)
+        self.lhs_2x = DownBlock(32, 64)
+        self.lhs_4x = DownBlock(64, 128)
+        self.lhs_8x = DownBlock(128, 256, ceil_mode=False)
+        self.lhs_16x = DownBlock(256, 256)
+
+        self.rhs_16x = UpBlock(256, 256)
+        self.rhs_8x = UpBlock(256, 128)
+        self.rhs_4x = UpBlock(128, 64)
+        self.rhs_2x = UpBlock(64, 32)
+        self.rhs_1x = UpBlock(32, 16)
+
+        self.classify_1x = nn.Conv2d(32, 2, kernel_size=1)
+
+    def forward(self, x, y_prev):
+        lhs_1x, pool = self.lhs_1x(self.in_fit(torch.cat([x, y_prev], dim=1)))
+        lhs_2x, pool = self.lhs_2x(pool)
+        lhs_4x, pool = self.lhs_4x(pool)
+        lhs_8x, pool = self.lhs_8x(pool)
+        lhs_16x, _ = self.lhs_16x(pool)
+
+        rhs_16x, up = self.rhs_16x(lhs_16x, pool)
+        rhs_8x, up = self.rhs_8x(lhs_8x, up)
+        rhs_4x, up = self.rhs_4x(lhs_4x, up)
+        rhs_2x, up = self.rhs_2x(lhs_2x, up)
+        rhs_1x, _ = self.rhs_1x(lhs_1x, up)
+
+        return self.classify_1x(rhs_1x)
+

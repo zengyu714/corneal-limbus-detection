@@ -121,7 +121,7 @@ def random_hflip(image, label, u=0.5):
 
 
 class CornealLimbusDataset(data.Dataset):
-    def __init__(self, mode='train', image_size=(200, 576), train_idx=[1, 2, 3], test_idx=[3]):
+    def __init__(self, mode='train', image_size=(200, 576), train_idx=[1, 2, 3, 4, 5], test_idx=[4, 5]):
         """Assume dataset is in directory '.data/frames_X/*' and '.data/label_init_X.jpg'
 
         Argument:

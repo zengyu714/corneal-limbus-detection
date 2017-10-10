@@ -37,12 +37,12 @@ def blend(image, label, curve_mask=None, alpha=0.3):
 def remove_isolation(mask):
     """Remove discrete pixels"""
     bw = label(mask == 1)
-    bw = remove_small_objects(bw, min_size=8192, connectivity=2)
+    bw = remove_small_objects(bw, min_size=4096, connectivity=2)
     bw = remove_small_holes(bw, min_size=4096, connectivity=2)
     return bw.astype(np.uint8)
 
 
-def fit_curve(mask, margin=(60, 60)):
+def thickness_fit_curve(mask, margin=(60, 60)):
     """Compute thickness by fitting the curve
     Argument:
         margin: indicate valid mask region in case overfit
@@ -81,7 +81,7 @@ def name2digit(name, char='_'):
     return int(name.split(char)[-1][:-4])
 
 
-def infer(model, model_name, infer_index=[1, 2, 3]):
+def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True, fit_curve=True):
     model = model.cuda().eval()
 
     best_path = 'checkpoints/{}/{}_best.pth'.format(model_name, model_name)
@@ -89,17 +89,21 @@ def infer(model, model_name, infer_index=[1, 2, 3]):
     print('===> Loading model from {}...'.format(best_path))
     model.load_state_dict(best_model)
 
+    template_bw, surround_bw = get_watermark_template(1)  # utilize standard watermark
+
     for idx in infer_index:
         infer_path = sorted(glob.glob('data/frames_{}/*'.format(idx)), key=name2digit)
+        print('===> Processing dataset: {}...'.format(idx))
 
-        # Pre-process
-        template_bw, surround_bw = get_watermark_template(idx)
         thicks = []
         for i, p in tqdm(enumerate(infer_path, start=1)):
             # Read frame and previous frame simultaneously
-            im = remove_watermark(imread(p), template_bw, surround_bw)
+            if dewatermark:
+                im = remove_watermark(imread(p), template_bw, surround_bw)
+            else:
+                im = imread(p)
             x = Variable(torch.from_numpy(im[None, None, ...]), volatile=True).float().cuda()
-
+            vis.image(im, opts=dict(title='image: {}'.format(i)))
             if i == 1:
                 lb = imread('data/label_init_{}.jpg'.format(idx))
                 lb = (lb > lb.max() * 0.5).astype(float)
@@ -115,26 +119,34 @@ def infer(model, model_name, infer_index=[1, 2, 3]):
             pred = pred[0].cpu().numpy()
             # Post-process
             display = remove_isolation(pred) * 255
-            thickness, curve_mask = fit_curve(display)
-            thicks.append(thickness)
+
+            try:
+                thickness, curve_mask = thickness_fit_curve(display)
+                thicks.append(thickness)
+            except:
+                curve_mask = None
+                thicks.append(0)
+                print('Oops, fail to detect {}th frame...'.format(i))
 
             # Save and Display
-            deploy_dir = ['deploy/{}/{}'.format(model_name, subdir) for subdir in ['bw', 'blend']]
+            deploy_dir = ['deploy/{}/{}_{}'.format(model_name, subdir, idx) for subdir in ['bw', 'blend']]
             [os.makedirs(dd) for dd in deploy_dir if not os.path.exists(dd)]
 
             imsave(deploy_dir[0] + '/{}.jpg'.format(i), display)
             imsave(deploy_dir[1] + '/{}.jpg'.format(i), blend(im, display, curve_mask))
             vis.image(display, opts=dict(title='image: {}'.format(i)))
 
-        np.save('deploy/{}/thickness.npy'.format(model_name), thicks)
+        np.save('deploy/{}/thickness_{}.npy'.format(model_name, idx), thicks)
 
 
-def generate_gif(model_name):
-    print('===> Generating Gif...')
-    with imageio.get_writer('deploy/{}/blend.gif'.format(model_name), mode='I') as writer:
-        for im_path in sorted(glob.glob('deploy/{}/blend/*.jpg'.format(model_name)), key=lambda k: name2digit(k, '/')):
-            image = imread(im_path)
-            writer.append_data(image)
+def generate_gif(model_name, infer_index):
+    for idx in infer_index:
+        print('===> Generating Gif: {}...'.format(idx))
+        with imageio.get_writer('deploy/{}/blend_{}.gif'.format(model_name, idx), mode='I') as writer:
+            for im_path in sorted(glob.glob('deploy/{}/blend_{}/*.jpg'.format(model_name, idx)),
+                                  key=lambda k: name2digit(k, '/')):
+                image = imread(im_path)
+                writer.append_data(image)
 
 
 if __name__ == '__main__':
@@ -142,5 +154,5 @@ if __name__ == '__main__':
 
     model = UNetVanilla()
     model_name = 'UNetVanilla'
-    infer(model, model_name, infer_index=[1])
-    generate_gif(model_name)
+    infer(model, model_name, infer_index=[4, 5], dewatermark=True)
+    generate_gif(model_name, infer_index=[4, 5])
