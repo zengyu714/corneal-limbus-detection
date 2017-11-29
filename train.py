@@ -142,7 +142,6 @@ def main():
                     stats=['loss', 'acc', 'dice_overlap'],
                     results_dir=conf.result_dir,
                     env=conf.prefix)
-
     def train():
         epoch_loss, epoch_acc, epoch_overlap = np.zeros(3)
 
@@ -213,6 +212,7 @@ def main():
     best_result = 0.0
     prog_start_time = datetime.datetime.now()
     elapsed_time, total_time = 0.0, 0.0
+
     for i in range(start_i, total_i + 1):
         start_time = time.process_time()
 

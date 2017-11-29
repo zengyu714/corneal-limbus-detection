@@ -11,7 +11,7 @@ from collections import Counter
 from skimage import img_as_float
 from skimage.exposure import adjust_gamma
 from skimage.transform import AffineTransform, PiecewiseAffineTransform, warp, resize
-from skimage.morphology import binary_dilation, disk
+from skimage.morphology import binary_dilation, binary_closing, disk
 
 
 def get_watermark_template(frame_index):
@@ -105,6 +105,71 @@ def simulate_prev_label(label, scale_limit=(0.9, 1.1), trans_limit=(-0.025, 0.02
     return binary_dilation(bw, selem=disk(1))
 
 
+def highlight_artifact(image):
+    """Simulate the random highlight artifact caused by machine error"""
+
+    def gen_random_position(h, w, num=15):
+        order = np.random.choice([4, 5, 6, 7], size=1, p=[0.5, 0.2, 0.2, 0.1])
+        coef = np.random.poisson(10, size=order)
+        p = np.poly1d(coef)
+        x = np.linspace(-num / 10, 1, num)
+        y = p(x)
+        # sign and rescale
+        y *= np.random.choice([-1, 1], size=1)
+        # normalize the x, y
+        x, y = [(i - i.min()) / (i.max() - i.min()) for i in [x, y]]
+        # list(zip(np.round(x * w), np.round(y * h)))
+        return np.floor(x * w).astype(int), np.floor(y * h).astype(int)
+
+    def mask_seed(side_limit, im_h=200, im_w=576):
+        # get the valid position in the image
+        h, w = np.random.randint(*side_limit, size=2)
+        x_ori = np.random.randint(low=0, high=im_w - w - 1)
+        y_ori = np.random.randint(low=h, high=im_h - 1)
+        # add random trans
+        x, y = gen_random_position(h, w, num=min(h, w))
+        x_sim = np.clip(x_ori + x, 0, im_w - 1)
+        y_sim = np.clip(y_ori + y, 0, im_h - 1)
+        fake = np.zeros([im_h, im_w])
+        fake[y_sim, x_sim] = 1
+        return fake
+
+    def gen_curve_mask():
+        fake = mask_seed(side_limit=(20, 45))
+        # dilate the scattered points
+        im_dilate = binary_dilation(fake > 0, np.ones([7, 4]))
+        im_close = binary_closing(im_dilate, np.ones([7, 3]))
+        # select the positive coordinates
+        y_pos, x_pos = np.where(im_close)
+        # assign triangular random intensity
+        fake[y_pos, x_pos] = np.random.power(3, len(y_pos)) * 0.3 + 0.1  # [0.1, 0.4]
+        return fake
+
+    def gen_speckle_mask():
+        fake = mask_seed(side_limit=(5, 15))
+        # dilate the scattered points
+        fatten = np.random.choice(range(2, 8))
+        im_dilate = binary_dilation(fake > 0, disk(fatten))
+        im_close = binary_closing(im_dilate, np.ones([fatten, 3]))
+        # select the positive coordinates
+        y_pos, x_pos = np.where(im_close)
+        # assign triangular random intensity
+        fake[y_pos, x_pos] = np.random.power(6, len(y_pos)) * 0.7 + 0.5  # [0.4, 1.0]
+        return fake
+
+    # 1. Curve
+    num_curve = np.random.choice(5)
+    for i in range(num_curve):
+        image += gen_curve_mask() * 255
+    image = np.clip(image, 0, 255)
+
+    # 2. Speckle
+    num_speck = np.random.choice(3)
+    for i in range(num_speck):
+        image += gen_speckle_mask() * 255
+    return np.clip(image, 0, 255)
+
+
 def random_gamma(image):
     """Adjust images' intensity"""
 
@@ -162,6 +227,8 @@ class CornealLimbusDataset(data.Dataset):
         im = random_gamma(im)
         # 2). Random horizontal flip
         im, lb = random_hflip(im, lb)
+        # 3). Highlight artifact
+        im = highlight_artifact(im)
 
         # One more label
         prev_lb = simulate_prev_label(lb)
@@ -180,6 +247,7 @@ class CornealLimbusDataset(data.Dataset):
 def _test_data_loader(dataset=CornealLimbusDataset()):
     training_data_loader = data.DataLoader(dataset=dataset, num_workers=4, batch_size=4, shuffle=True)
     im, lb, prev_lb = next(iter(training_data_loader))
+    print(im.mean(), im.max())
     if isinstance(lb, torch.FloatTensor):
         print(im.size(), 'image')
         print(lb.size(), 'label')

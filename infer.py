@@ -11,11 +11,12 @@ from torch.autograd import Variable
 from tqdm import tqdm
 from scipy.misc import imread, imsave
 from skimage.feature import corner_harris, corner_peaks
-from skimage.morphology import remove_small_objects, remove_small_holes, binary_closing, disk, label
+from skimage.morphology import remove_small_objects, remove_small_holes, \
+    binary_closing, binary_opening, disk, rectangle, label
 from skimage.segmentation import find_boundaries
 
 from inputs import get_watermark_template, remove_watermark
-from unet import UNetVanilla
+from unet import UNetVanilla, UNetShortCut
 
 vis = visdom.Visdom()
 
@@ -44,7 +45,7 @@ def loop_close(num, bw, radius=35):
     return bw
 
 
-def loop_corner(coords, bw, w, rw, radius=35):
+def loop_corner(coords, bw, w, rw, radius=15):
     """
     Argument:
         coords: coordinates of detected corners
@@ -67,6 +68,7 @@ def remove_isolation(mask, roi_width=30):
     """
     # 1) Filling holes
     bw = label(mask == 1)
+    bw = binary_opening(bw, rectangle(3, 15))
     bw = remove_small_objects(bw, min_size=4096, connectivity=2)
     bw = remove_small_holes(bw, min_size=4096, connectivity=2)
     # 2) Detect evil interval
@@ -107,8 +109,8 @@ def fitting_curve(mask, margin=(60, 60)):
     width = mask.shape[1]
     x_cord = range(width)
     y_up_fit, y_lw_fit = [f(x_cord) for f in [f_up, f_lw]]
-
-    thickness = (y_up_fit - y_lw_fit)[width // 2 - 10: width // 2 + 10]
+    rw = 30  # roi width
+    thickness = (y_up_fit - y_lw_fit)[width // 2 - rw: width // 2 + rw]
 
     curve_mask = np.zeros_like(mask)
     y_up_fit, y_lw_fit = [np.array(y, dtype=int) for y in [y_up_fit, y_lw_fit]]  # int for slice
@@ -163,7 +165,7 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True):
             try:
                 thickness, curve_mask = fitting_curve(display)
                 thicks.append(thickness)
-            except IndexError:
+            except (IndexError, TypeError):
                 curve_mask = None
                 thicks.append(0)
                 print('Oops, fail to detect {}th frame...'.format(i))
@@ -195,5 +197,5 @@ if __name__ == '__main__':
 
     model = UNetVanilla()
     model_name = 'UNetVanilla'
-    infer(model, model_name, infer_index=[1, 2, 3, 4, 5], dewatermark=True)
-    generate_gif(model_name, infer_index=[1, 2, 3, 4, 5])
+    infer(model, model_name, infer_index=[1, 2])#, 3, 4, 5])
+    generate_gif(model_name, infer_index=[1, 2])#, 3, 4, 5])
