@@ -35,7 +35,7 @@ class Configuration:
         self.cuda_device = cuda_device
 
         self.batch_size = 16
-        self.epochs = 30
+        self.epochs = 4
         self.augment_size = 1000
         self.loss_size = 1
         self.loss_func = 'DiceLoss()(probs, trues)'

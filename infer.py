@@ -11,7 +11,7 @@ from torch.autograd import Variable
 from tqdm import tqdm
 from scipy.misc import imread, imsave
 from skimage.feature import corner_harris, corner_peaks
-from skimage.morphology import remove_small_objects, remove_small_holes, \
+from skimage.morphology import remove_small_objects, remove_small_holes, convex_hull_image, \
     binary_closing, binary_opening, disk, rectangle, label
 from skimage.segmentation import find_boundaries
 
@@ -61,7 +61,7 @@ def loop_corner(coords, bw, w, rw, radius=15):
     return bw
 
 
-def remove_isolation(mask, roi_width=30):
+def post_procoess_v1(mask, roi_width=30):
     """Remove discrete pixels and close gaps
     Argument:
         roi width: corner detection range
@@ -84,6 +84,36 @@ def remove_isolation(mask, roi_width=30):
         bw = loop_corner(coords, bw, w, rw)
     return bw.astype(np.uint8)
 
+
+def post_process_v2(mask):
+    """Mainly remove the convex areas"""
+
+    bw = label(mask == 1)
+    # 1) detach mislabeled pixels
+    bw = binary_opening(bw, rectangle(2, 20))
+    # 2) remove small objects
+    bw = remove_small_objects(bw, min_size=4096, connectivity=2)
+    # 3) solve the defeat, typically the convex outline
+    coords = corner_peaks(corner_harris(bw, k=0.2), min_distance=5)
+    valid = [c for c in coords if 100 < c[1] < 476]  # only cares about this valid range
+    if valid:
+        y, x = zip(*valid)
+        # corners appear in pair
+        if len(y) % 2 == 0:
+            # select the lowest pair
+            left_x, right_x = [func(x[0], x[1]) for func in (min, max)]
+            sep_x = np.arange(left_x, right_x + 1).astype(int)
+            sep_y = np.floor(np.linspace(y[0], y[1] + 1, len(sep_x))).astype(int)
+            # make the gap manually
+            bw[sep_y, sep_x] = 0
+            bw = binary_opening(bw, disk(6))
+        else:
+            mask = np.zeros_like(bw)
+            mask[y, x] = 1
+            chull = convex_hull_image(mask)
+            bw = np.logical_xor(chull, bw)
+            bw = binary_opening(bw, disk(6))
+    return bw
 
 def fitting_curve(mask, margin=(60, 60)):
     """Compute thickness by fitting the curve
@@ -161,7 +191,7 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True):
 
             pred = pred[0].cpu().numpy()
             # Post-process
-            display = remove_isolation(pred) * 255
+            display = post_process_v2(pred) * 255
             try:
                 thickness, curve_mask = fitting_curve(display)
                 thicks.append(thickness)
@@ -184,8 +214,8 @@ def infer(model, model_name, infer_index=[1, 2, 3], dewatermark=True):
 
 def generate_gif(model_name, infer_index):
     for idx in infer_index:
-        print('===> Generating Gif: {}...'.format(idx))
-        with imageio.get_writer('deploy/{}/blend_{}.gif'.format(model_name, idx), mode='I') as writer:
+        print('===> Generating mp4: {}...'.format(idx))
+        with imageio.get_writer('deploy/{}/blend_{}.mp4'.format(model_name, idx), mode='I') as writer:
             for im_path in sorted(glob.glob('deploy/{}/blend_{}/*.jpg'.format(model_name, idx)),
                                   key=lambda k: name2digit(k, '/')):
                 image = imread(im_path)
@@ -197,5 +227,5 @@ if __name__ == '__main__':
 
     model = UNetVanilla()
     model_name = 'UNetVanilla'
-    infer(model, model_name, infer_index=[1, 2])#, 3, 4, 5])
-    generate_gif(model_name, infer_index=[1, 2])#, 3, 4, 5])
+    infer(model, model_name, infer_index=[1, 2, 3, 4, 5])
+    generate_gif(model_name, infer_index=[1, 2, 3, 4, 5])
